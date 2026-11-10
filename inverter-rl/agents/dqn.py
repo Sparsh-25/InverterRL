@@ -21,7 +21,7 @@ def encode(obs):
 
 
 class DQN:
-    def __init__(self, seed=0, gamma=0.99, lr=1e-3, buffer_size=50_000,
+    def __init__(self, seed=0, gamma=0.99, lr=3e-4, buffer_size=200_000,
                  batch_size=64, target_update=500):
         torch.manual_seed(seed)
         self.net = nn.Sequential(nn.Linear(4, 64), nn.ReLU(),

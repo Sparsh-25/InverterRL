@@ -3,7 +3,7 @@
 from agents.common import epsilon_greedy
 
 
-def train_episode(Q, env, epsilon, rng, alpha=0.1, gamma=0.99):
+def train_episode(Q, env, epsilon, rng, alpha=0.05, gamma=0.99):
     """Runs one episode and updates Q in place."""
     obs, _ = env.reset()
     done = False

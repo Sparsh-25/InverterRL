@@ -29,8 +29,8 @@ def test_one_step_td_update(agent):
     agent.train_episode(Q, env, epsilon=0, rng=np.random.default_rng(0))
 
     # All Q equal, so greedy picks Charge: reward -14.4 (2 units at ₹7.20)
-    # target = -14.4 + 0.99 * -580 = -588.6, new Q = -580 + 0.1 * (-588.6 + 580)
-    assert Q[5, 19, 0, CHARGE] == pytest.approx(-580.86)
+    # target = -14.4 + 0.99 * -580 = -588.6, new Q = -580 + 0.05 * (-588.6 + 580)
+    assert Q[5, 19, 0, CHARGE] == pytest.approx(-580.43)
 
 
 def test_dqn_encoding_puts_hour_23_next_to_hour_0():
