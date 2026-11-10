@@ -1,0 +1,469 @@
+<title>Inverter Battery Simulator</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+Condensed:wght@500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+/* Layout: an instrument panel. Controls on top, a clock strip, then one lane per policy:
+   live battery card on the left, a scrolling 7-day trace on the right. Long-run table last. */
+:root {
+  --bg: #f4f6f7;
+  --surface: #ffffff;
+  --fg: #15201f;
+  --muted: #5b6766;
+  --line: #d9dfdf;
+  --accent: #0f6f6a;        /* battery trace and active controls */
+  --solar: #e3a500;         /* cheap solar hours */
+  --peak: #d4552b;          /* evening peak */
+  --cut: #8a96a3;           /* grid off */
+  --blackout: #c22a2a;
+  --charge: #1b9e6e;
+  --hold: #c9cfcf;
+  --discharge: #e0703c;
+  --font-display: "IBM Plex Sans Condensed", "Arial Narrow", system-ui, sans-serif;
+  --font-body: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-data: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #111716; --surface: #1a2221; --fg: #e6ecea; --muted: #9aa7a5; --line: #2e3a38;
+    --accent: #4cc3b8; --solar: #e9b52e; --peak: #ea7650; --cut: #6c7885; --blackout: #f05a5a;
+    --charge: #34b985; --hold: #4a5554; --discharge: #ee8a5a; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #111716; --surface: #1a2221; --fg: #e6ecea; --muted: #9aa7a5; --line: #2e3a38;
+  --accent: #4cc3b8; --solar: #e9b52e; --peak: #ea7650; --cut: #6c7885; --blackout: #f05a5a;
+  --charge: #34b985; --hold: #4a5554; --discharge: #ee8a5a; color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body {
+  background: var(--bg); color: var(--fg); font-family: var(--font-body); font-size: 15px; line-height: 1.5;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 24px 40px;
+}
+.wrap { max-width: 1180px; margin: 0 auto; display: grid; gap: 20px; }
+h1, h2 { font-family: var(--font-display); font-weight: 600; text-wrap: balance; margin: 0; letter-spacing: 0.01em; }
+h1 { font-size: clamp(1.6rem, 3vw, 2.1rem); }
+h2 { font-size: 1.15rem; }
+.lede { margin: 6px 0 0; color: var(--muted); max-width: 70ch; }
+.label { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); font-weight: 600; }
+.num { font-family: var(--font-data); font-variant-numeric: tabular-nums; }
+
+/* Controls */
+.controls { display: flex; flex-wrap: wrap; gap: 16px 28px; align-items: end; padding: 16px; background: var(--surface);
+  border: 1px solid var(--line); border-radius: 10px; }
+.group { display: grid; gap: 6px; }
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.seg button { border: 0; border-right: 1px solid var(--line); background: transparent; color: var(--fg); padding: 7px 12px;
+  font: inherit; font-size: 0.88rem; cursor: pointer; }
+.seg button:last-child { border-right: 0; }
+.seg button[aria-pressed="true"] { background: var(--accent); color: var(--surface); font-weight: 600; }
+.seg button:disabled { color: var(--muted); cursor: not-allowed; opacity: 0.55; }
+button.btn, select, input[type="number"] { font: inherit; font-size: 0.88rem; color: var(--fg); background: var(--surface);
+  border: 1px solid var(--line); border-radius: 8px; padding: 7px 12px; }
+button.btn { cursor: pointer; }
+button.btn.primary { background: var(--accent); color: var(--surface); border-color: var(--accent); font-weight: 600; min-width: 84px; }
+button:focus-visible, select:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+input[type="number"] { width: 6.5em; }
+.hint { font-size: 0.8rem; color: var(--muted); }
+
+/* Clock strip */
+.now { display: flex; flex-wrap: wrap; gap: 10px 22px; align-items: center; }
+.clock { font-family: var(--font-data); font-size: 1.5rem; font-weight: 500; }
+.chip { display: inline-flex; align-items: center; gap: 7px; padding: 4px 11px; border-radius: 999px; font-size: 0.86rem;
+  border: 1px solid var(--line); background: var(--surface); }
+.dot { width: 9px; height: 9px; border-radius: 50%; background: var(--muted); }
+.chip.solar .dot { background: var(--solar); }
+.chip.peak .dot { background: var(--peak); }
+.chip.off { border-color: var(--cut); }
+.chip.off .dot { background: var(--cut); }
+.chip.on .dot { background: var(--charge); }
+
+/* Lanes */
+.lanes { display: grid; gap: 14px; }
+.lane { display: grid; grid-template-columns: 250px minmax(0, 1fr); gap: 16px; padding: 14px; background: var(--surface);
+  border: 1px solid var(--line); border-radius: 10px; }
+.card { display: grid; gap: 10px; align-content: start; min-width: 0; }
+.card select { width: 100%; }
+.gauge { display: grid; grid-template-columns: repeat(10, 1fr); gap: 3px; height: 26px; padding: 3px; border: 1.5px solid var(--fg);
+  border-radius: 5px; position: relative; }
+.gauge::after { content: ""; position: absolute; right: -6px; top: 7px; width: 4px; height: 10px; background: var(--fg); border-radius: 0 2px 2px 0; }
+.cell { border-radius: 2px; background: transparent; }
+.cell.full { background: var(--accent); }
+.gauge.low .cell.full { background: var(--blackout); }
+.stats { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 12px; }
+.stat { display: grid; }
+.stat .v { font-family: var(--font-data); font-variant-numeric: tabular-nums; font-size: 1.02rem; }
+.act { display: inline-flex; align-items: center; gap: 6px; font-size: 0.86rem; }
+.swatch { width: 12px; height: 12px; border-radius: 3px; display: inline-block; }
+.trace { position: relative; min-width: 0; }
+canvas { display: block; width: 100%; height: 150px; }
+.tip { position: absolute; pointer-events: none; background: var(--fg); color: var(--bg); font-size: 0.78rem; padding: 6px 9px;
+  border-radius: 6px; white-space: nowrap; transform: translate(-50%, -100%); line-height: 1.4; z-index: 2; }
+
+.legend { display: flex; flex-wrap: wrap; gap: 8px 18px; font-size: 0.82rem; color: var(--muted); }
+.legend span { display: inline-flex; align-items: center; gap: 6px; }
+
+/* Long-run table */
+.summary { padding: 16px; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; display: grid; gap: 10px; }
+.tablewrap { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; font-size: 0.9rem; }
+th, td { text-align: right; padding: 7px 10px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+th:first-child, td:first-child { text-align: left; }
+th { font-weight: 600; color: var(--muted); font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.06em; }
+td.num { font-family: var(--font-data); }
+.ref td { color: var(--muted); }
+footer { color: var(--muted); font-size: 0.84rem; max-width: 80ch; display: grid; gap: 6px; }
+footer p { margin: 0; }
+
+@media (max-width: 760px) {
+  .lane { grid-template-columns: minmax(0, 1fr); }
+  canvas { height: 130px; }
+}
+</style>
+
+<div class="wrap">
+  <header>
+    <h1>Inverter Battery Simulator</h1>
+    <p class="lede">Each hour the battery is charged, held or used, and power cuts arrive with the probabilities measured at
+      Guddiangadi, Karnataka (ESMI 2018). All three lanes face the same cuts, so differences come from the policies alone.</p>
+  </header>
+
+  <section class="controls" aria-label="Settings">
+    <div class="group">
+      <span class="label" id="lbl-season">Cut pattern</span>
+      <div class="seg" role="group" aria-labelledby="lbl-season">
+        <button id="season-normal" data-season="normal" aria-pressed="true">Normal months</button>
+        <button id="season-summer" data-season="summer" aria-pressed="false">Summer (Apr–Jun)</button>
+      </div>
+    </div>
+    <div class="group">
+      <span class="label" id="lbl-penalty">Blackout penalty κ</span>
+      <div class="seg" role="group" aria-labelledby="lbl-penalty">
+        <button id="pen-20" data-penalty="20" aria-pressed="false">20</button>
+        <button id="pen-50" data-penalty="50" aria-pressed="true">50</button>
+        <button id="pen-100" data-penalty="100" aria-pressed="false">100</button>
+      </div>
+    </div>
+    <div class="group">
+      <span class="label" id="lbl-trained">Learners trained on</span>
+      <div class="seg" role="group" aria-labelledby="lbl-trained">
+        <button id="trained-normal" data-trained="normal" aria-pressed="true">Normal pattern</button>
+        <button id="trained-summer" data-trained="summer" aria-pressed="false">Then summer</button>
+      </div>
+    </div>
+    <div class="group">
+      <label class="label" for="seed">Power-cut sequence</label>
+      <div class="row">
+        <input id="seed" type="number" min="1" max="99999" value="7">
+        <button class="btn" id="newcuts">New cuts</button>
+      </div>
+    </div>
+    <div class="group">
+      <span class="label">Playback</span>
+      <div class="row">
+        <button class="btn primary" id="play">Play</button>
+        <button class="btn" id="step">+1 hour</button>
+        <button class="btn" id="day">+1 day</button>
+        <label class="hint" for="speed">Speed</label>
+        <select id="speed">
+          <option value="2">2 h/s</option>
+          <option value="6" selected>6 h/s</option>
+          <option value="24">1 day/s</option>
+          <option value="96">4 days/s</option>
+        </select>
+        <button class="btn" id="reset">Restart</button>
+      </div>
+    </div>
+  </section>
+
+  <section class="now" aria-live="polite">
+    <span class="clock" id="clock">Day 1 · 00:00</span>
+    <span class="chip" id="price-chip"><span class="dot"></span><span id="price-text">Normal rate ₹6.00 / unit</span></span>
+    <span class="chip on" id="grid-chip"><span class="dot"></span><span id="grid-text">Grid on</span></span>
+    <span class="hint" id="trained-note"></span>
+  </section>
+
+  <section class="lanes" id="lanes"></section>
+
+  <div class="legend" aria-label="Legend">
+    <span><span class="swatch" style="background:var(--accent)"></span>Battery level (0–10 units)</span>
+    <span><span class="swatch" style="background:var(--cut);opacity:.45"></span>Power cut</span>
+    <span><span class="swatch" style="background:var(--blackout)"></span>Blackout hour (battery empty during a cut)</span>
+    <span><span class="swatch" style="background:var(--solar)"></span>Solar hours ₹4.80</span>
+    <span><span class="swatch" style="background:var(--peak)"></span>Peak ₹7.20</span>
+    <span><span class="swatch" style="background:var(--charge)"></span>Charge</span>
+    <span><span class="swatch" style="background:var(--hold)"></span>Hold</span>
+    <span><span class="swatch" style="background:var(--discharge)"></span>Discharge</span>
+  </div>
+
+  <section class="summary" aria-labelledby="sum-h">
+    <div class="row" style="justify-content:space-between">
+      <div>
+        <h2 id="sum-h">Long run</h2>
+        <span class="hint" id="sum-days">Averages per day over 3 simulated days.</span>
+      </div>
+      <button class="btn" id="fast">Run 1,000 more days</button>
+    </div>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Policy</th><th>Score / day</th><th>Bill ₹ / day</th><th>Blackout h / day</th><th>Regret vs optimum</th></tr></thead>
+        <tbody id="sum-body"></tbody>
+      </table>
+    </div>
+    <span class="hint">Score = −(bill) − κ × (blackout hours). Regret is how much worse than the DP optimum the policy scores, in % of the optimum, on the same cuts. A few days are noisy; run 1,000 days to compare with Tables X and XI of the report.</span>
+  </section>
+
+  <footer>
+    <p>The policies are the project's real results: DP optimal policies from value iteration, the hand-written rule, and the trained SARSA, Q-learning, Monte Carlo and DQN policies from <span class="num">results/</span> (the seed with the median final regret). “Then summer” uses the policies trained 50,000 episodes on the normal pattern and 50,000 on summer with ε reset to 0.5; they exist only for κ = 50.</p>
+    <p>Each run starts at midnight with the battery at 5 units and the grid on. The simulation follows <span class="num">env.py</span> step by step: one unit of demand per hour, Charge buys 2 units, Hold buys 1, Discharge buys none, and during a cut the battery runs the house whatever the action.</p>
+  </footer>
+</div>
+
+<script src="sim.js"></script>
+<script>
+(async function () {
+  const data = await (await fetch("policies.json")).json();
+  const NAMES = {
+    dp: "DP optimal (knows the cut probabilities)", dp_normal: "DP normal policy, not adapted", rule: "Rule-based",
+    sarsa: "SARSA", q_learning: "Q-learning", monte_carlo: "Monte Carlo", dqn: "DQN",
+  };
+  const ACTION = ["Charge", "Hold", "Discharge"];
+  const WINDOW = 168;
+  const state = { season: "normal", penalty: 50, trained: "normal", seed: 7, lanes: ["dp", "rule", "sarsa"] };
+  let world, lanes, reference, history, elapsed, timer = null;
+
+  function policyFor(key) {
+    if (key === "dp") return data.dp[state.penalty][state.season];
+    if (key === "dp_normal") return data.dp[state.penalty].normal;
+    if (key === "rule") return data.rule;
+    const entry = data.learned[state.penalty][key];
+    return state.trained === "summer" && entry.summer ? entry.summer : entry.normal;
+  }
+
+  function fresh(key) { return { key, policy: policyFor(key), battery: 5, bill: 0, blackouts: 0, score: 0 }; }
+
+  function restart() {
+    world = { hour: 0, off: 0, random: Sim.rng(state.seed) };
+    lanes = state.lanes.map(fresh);
+    reference = fresh("dp"); // hidden lane: regret is measured against it
+    history = [];
+    elapsed = 0;
+    advance(72); // open on three simulated days
+  }
+
+  function advance(hours) {
+    for (let i = 0; i < hours; i++) {
+      const rec = Sim.step(data, world, lanes.concat([reference]), state.season, state.penalty);
+      rec.t = elapsed++;
+      history.push(rec);
+    }
+    if (history.length > WINDOW) history = history.slice(-WINDOW);
+    render();
+  }
+
+  // ---------- Building the lanes ----------
+  const lanesEl = document.getElementById("lanes");
+  function buildLanes() {
+    lanesEl.innerHTML = "";
+    state.lanes.forEach((key, i) => {
+      const lane = document.createElement("article");
+      lane.className = "lane";
+      const options = Object.entries(NAMES).map(([k, n]) => `<option value="${k}"${k === key ? " selected" : ""}>${n}</option>`).join("");
+      lane.innerHTML = `
+        <div class="card">
+          <label class="label" for="pol-${i}">Lane ${i + 1} policy</label>
+          <select id="pol-${i}">${options}</select>
+          <div class="gauge" id="gauge-${i}" role="img" aria-label="Battery level">${'<span class="cell"></span>'.repeat(10)}</div>
+          <div class="act" id="act-${i}"></div>
+          <div class="stats">
+            <div class="stat"><span class="label">Bill so far</span><span class="v" id="bill-${i}">₹0</span></div>
+            <div class="stat"><span class="label">Blackout hours</span><span class="v" id="bo-${i}">0</span></div>
+            <div class="stat"><span class="label">Score so far</span><span class="v" id="score-${i}">0</span></div>
+            <div class="stat"><span class="label">vs DP optimal</span><span class="v" id="gap-${i}">0</span></div>
+          </div>
+        </div>
+        <div class="trace"><canvas id="cv-${i}" aria-label="Battery level, actions and power cuts over the last 7 days"></canvas><div class="tip" id="tip-${i}" hidden></div></div>`;
+      lanesEl.appendChild(lane);
+      lane.querySelector("select").addEventListener("change", (e) => { state.lanes[i] = e.target.value; restart(); });
+      const cv = lane.querySelector("canvas");
+      cv.addEventListener("mousemove", (e) => hover(i, e));
+      cv.addEventListener("mouseleave", () => { document.getElementById(`tip-${i}`).hidden = true; });
+    });
+  }
+
+  // ---------- Drawing ----------
+  function css(name) { return getComputedStyle(document.documentElement).getPropertyValue(name).trim(); }
+  const fmtHour = (h) => String(h).padStart(2, "0") + ":00";
+  const PAD = { l: 26, r: 6, t: 14, b: 22 };
+
+  function geometry(cv) {
+    const w = cv.clientWidth, h = cv.clientHeight;
+    return { w, h, plotW: w - PAD.l - PAD.r, plotH: h - PAD.t - PAD.b, x: (k) => PAD.l + k * (w - PAD.l - PAD.r) / WINDOW };
+  }
+
+  function draw(i) {
+    const cv = document.getElementById(`cv-${i}`);
+    const dpr = window.devicePixelRatio || 1;
+    const g = geometry(cv);
+    if (cv.width !== Math.round(g.w * dpr)) { cv.width = Math.round(g.w * dpr); cv.height = Math.round(g.h * dpr); }
+    const c = cv.getContext("2d");
+    c.setTransform(dpr, 0, 0, dpr, 0, 0);
+    c.clearRect(0, 0, g.w, g.h);
+    const col = { fg: css("--fg"), muted: css("--muted"), line: css("--line"), accent: css("--accent"), solar: css("--solar"),
+      peak: css("--peak"), cut: css("--cut"), blackout: css("--blackout"), act: [css("--charge"), css("--hold"), css("--discharge")] };
+    const cw = g.plotW / WINDOW, y = (b) => PAD.t + g.plotH * (1 - b / 10);
+    c.font = `11px ${css("--font-data")}`;
+    c.fillStyle = col.muted; c.textAlign = "right"; c.textBaseline = "middle";
+    [0, 5, 10].forEach((b) => {
+      c.fillText(b, PAD.l - 6, y(b));
+      c.strokeStyle = col.line; c.lineWidth = 1; c.beginPath(); c.moveTo(PAD.l, y(b) + 0.5); c.lineTo(g.w - PAD.r, y(b) + 0.5); c.stroke();
+    });
+    history.forEach((rec, k) => {
+      const x = g.x(k);
+      const p = Sim.period(rec.hour);
+      if (p !== "normal") { c.fillStyle = p === "solar" ? col.solar : col.peak; c.fillRect(x, 2, cw + 0.5, 6); }
+      if (rec.off) { c.globalAlpha = 0.28; c.fillStyle = col.cut; c.fillRect(x, PAD.t, cw + 0.5, g.plotH); c.globalAlpha = 1; }
+      const lr = rec.lanes[i];
+      c.fillStyle = rec.off ? col.line : col.act[lr.action];
+      c.fillRect(x, g.h - PAD.b + 6, Math.max(cw - 0.5, 0.5), 7);
+      if (lr.blackout) { c.fillStyle = col.blackout; c.fillRect(x, y(0) - 6, cw + 0.5, 6); }
+      if (rec.hour === 0) {
+        c.strokeStyle = col.line; c.beginPath(); c.moveTo(x + 0.5, PAD.t); c.lineTo(x + 0.5, g.h - PAD.b); c.stroke();
+        c.fillStyle = col.muted; c.textAlign = "left"; c.textBaseline = "alphabetic";
+        if (g.plotW > 360 || Math.floor(rec.t / 24) % 2 === 0) c.fillText(`Day ${Math.floor(rec.t / 24) + 1}`, x + 3, g.h - 2);
+      }
+    });
+    // Battery after each hour, as a step line
+    c.strokeStyle = col.accent; c.lineWidth = 2; c.lineJoin = "round"; c.beginPath();
+    history.forEach((rec, k) => {
+      const b = rec.lanes[i].battery, x = g.x(k);
+      if (k === 0) c.moveTo(x, y(b)); else c.lineTo(x, y(b));
+      c.lineTo(x + cw, y(b));
+    });
+    c.stroke();
+    if (history.length) {
+      const k = history.length - 1, b = history[k].lanes[i].battery;
+      c.fillStyle = col.accent; c.beginPath(); c.arc(g.x(k) + cw, y(b), 4, 0, Math.PI * 2); c.fill();
+    }
+  }
+
+  function hover(i, e) {
+    const cv = e.currentTarget, g = geometry(cv), rect = cv.getBoundingClientRect();
+    const k = Math.floor((e.clientX - rect.left - PAD.l) / (g.plotW / WINDOW));
+    const tip = document.getElementById(`tip-${i}`);
+    if (k < 0 || k >= history.length) { tip.hidden = true; return; }
+    const rec = history[k], lr = rec.lanes[i];
+    const grid = rec.off ? `Power cut (${rec.off === 3 ? "3+" : rec.off} h)` : "Grid on";
+    const did = rec.off ? (lr.blackout ? "Blackout" : "Battery runs the house") : ACTION[lr.action];
+    tip.innerHTML = `Day ${Math.floor(rec.t / 24) + 1} · ${fmtHour(rec.hour)} · ₹${rec.price.toFixed(2)}<br>${grid} · ${did}<br>Battery after: ${lr.battery} · bill ₹${lr.bill.toFixed(2)}`;
+    tip.style.left = `${Math.min(Math.max(e.clientX - rect.left, 90), rect.width - 90)}px`;
+    tip.style.top = `${PAD.t}px`;
+    tip.hidden = false;
+  }
+
+  // ---------- Text ----------
+  const money = (v) => "₹" + v.toLocaleString("en-IN", { maximumFractionDigits: 0 });
+  function render() {
+    const day = Math.floor(elapsed / 24) + 1, p = Sim.period(world.hour), price = data.price[p];
+    document.getElementById("clock").textContent = `Day ${day} · ${fmtHour(world.hour)}`;
+    const pc = document.getElementById("price-chip");
+    pc.className = "chip " + p;
+    document.getElementById("price-text").textContent =
+      `${{ solar: "Solar hours", peak: "Evening peak", normal: "Normal rate" }[p]} ₹${price.toFixed(2)} / unit`;
+    const gc = document.getElementById("grid-chip");
+    gc.className = "chip " + (world.off ? "off" : "on");
+    document.getElementById("grid-text").textContent = world.off ? `Power cut, ${world.off === 3 ? "3+" : world.off} h so far` : "Grid on";
+    const learnerShown = state.lanes.some((k) => data.learned[50][k]);
+    document.getElementById("trained-note").textContent = state.penalty !== 50 && state.trained === "summer" && learnerShown
+      ? "Summer-trained learners exist only for κ = 50; showing the normal-trained ones." : "";
+
+    lanes.forEach((lane, i) => {
+      const cells = document.querySelectorAll(`#gauge-${i} .cell`);
+      cells.forEach((cell, j) => cell.classList.toggle("full", j < lane.battery));
+      const gauge = document.getElementById(`gauge-${i}`);
+      gauge.classList.toggle("low", lane.battery <= 2);
+      gauge.setAttribute("aria-label", `Battery ${lane.battery} of 10 units`);
+      const last = history.length ? history[history.length - 1].lanes[i] : null;
+      const actEl = document.getElementById(`act-${i}`);
+      if (last) {
+        const off = history[history.length - 1].off;
+        const label = off ? (last.blackout ? "Blackout this hour" : "Cut: battery runs the house") : ACTION[last.action];
+        const colorVar = off ? (last.blackout ? "--blackout" : "--cut") : ["--charge", "--hold", "--discharge"][last.action];
+        actEl.innerHTML = `<span class="swatch" style="background:var(${colorVar})"></span>Last hour: ${label}`;
+      }
+      document.getElementById(`bill-${i}`).textContent = money(lane.bill);
+      document.getElementById(`bo-${i}`).textContent = lane.blackouts;
+      document.getElementById(`score-${i}`).textContent = Math.round(lane.score).toLocaleString("en-IN");
+      const gap = lane.score - reference.score;
+      document.getElementById(`gap-${i}`).textContent = (gap >= 0 ? "+" : "−") + Math.abs(Math.round(gap)).toLocaleString("en-IN");
+      draw(i);
+    });
+    renderSummary();
+  }
+
+  function renderSummary() {
+    const days = elapsed / 24;
+    document.getElementById("sum-days").textContent =
+      `Averages per day over ${days.toLocaleString("en-IN", { maximumFractionDigits: 1 })} simulated days, κ = ${state.penalty}, ${state.season === "summer" ? "summer" : "normal"} pattern.`;
+    const best = reference.score / days;
+    const row = (name, l, cls = "") => {
+      const s = l.score / days, regret = (best - s) / -best * 100;
+      return `<tr class="${cls}"><td>${name}</td><td class="num">${s.toFixed(2)}</td><td class="num">${(l.bill / days).toFixed(2)}</td>` +
+        `<td class="num">${(l.blackouts / days).toFixed(2)}</td><td class="num">${cls ? "reference" : regret.toFixed(2) + "%"}</td></tr>`;
+    };
+    document.getElementById("sum-body").innerHTML =
+      lanes.map((l, i) => row(`Lane ${i + 1}: ${NAMES[l.key]}`, l)).join("") + row("DP optimal for this pattern", reference, "ref");
+  }
+
+  // ---------- Controls ----------
+  function press(attr, value) {
+    document.querySelectorAll(`[data-${attr}]`).forEach((b) => b.setAttribute("aria-pressed", String(b.dataset[attr] === String(value))));
+  }
+  function syncTrained() {
+    const ok = state.penalty === 50;
+    document.getElementById("trained-summer").disabled = !ok;
+    document.getElementById("trained-summer").title = ok ? "" : "Only trained for κ = 50";
+    if (!ok && state.trained === "summer") { state.trained = "normal"; press("trained", "normal"); }
+  }
+  document.querySelectorAll("[data-season]").forEach((b) => b.addEventListener("click", () => {
+    state.season = b.dataset.season; press("season", state.season); restart();
+  }));
+  document.querySelectorAll("[data-penalty]").forEach((b) => b.addEventListener("click", () => {
+    state.penalty = Number(b.dataset.penalty); press("penalty", state.penalty); syncTrained(); restart();
+  }));
+  document.querySelectorAll("[data-trained]").forEach((b) => b.addEventListener("click", () => {
+    if (b.disabled) return; state.trained = b.dataset.trained; press("trained", state.trained); restart();
+  }));
+  const seedEl = document.getElementById("seed");
+  seedEl.addEventListener("change", () => { state.seed = Math.max(1, Number(seedEl.value) || 1); restart(); });
+  document.getElementById("newcuts").addEventListener("click", () => {
+    state.seed = 1 + Math.floor(Math.random() * 99999); seedEl.value = state.seed; restart();
+  });
+
+  const playBtn = document.getElementById("play"), speedEl = document.getElementById("speed");
+  function stop() { clearInterval(timer); timer = null; playBtn.textContent = "Play"; }
+  function start() {
+    stop();
+    const perSecond = Number(speedEl.value), batch = Math.max(1, Math.round(perSecond / 12));
+    timer = setInterval(() => advance(batch), 1000 / Math.min(perSecond, 12));
+    playBtn.textContent = "Pause";
+  }
+  playBtn.addEventListener("click", () => (timer ? stop() : start()));
+  speedEl.addEventListener("change", () => { if (timer) start(); });
+  document.getElementById("step").addEventListener("click", () => { stop(); advance(1); });
+  document.getElementById("day").addEventListener("click", () => { stop(); advance(24); });
+  document.getElementById("reset").addEventListener("click", () => { stop(); restart(); });
+  document.getElementById("fast").addEventListener("click", () => { stop(); advance(24 * 1000); });
+  window.addEventListener("resize", () => lanes.forEach((_, i) => draw(i)));
+  window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => lanes.forEach((_, i) => draw(i)));
+  new MutationObserver(() => lanes.forEach((_, i) => draw(i))).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+
+  const origRestart = restart;
+  restart = function () { stop(); buildLanes(); origRestart(); };
+  syncTrained();
+  restart();
+})();
+</script>
