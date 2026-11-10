@@ -2,20 +2,20 @@
 
 import numpy as np
 
-from env import CHARGE, DISCHARGE, HOLD, MAX_BATTERY
+from env import CHARGE, DISCHARGE, HOLD, MAX_BATTERY, MAX_OFF, period
 
 
 def rule_action(battery, hour):
-    if hour >= 22 or hour < 6:  # off-peak
+    if period(hour) == "solar":  # cheapest hours
         return CHARGE
-    if 18 <= hour <= 21:  # peak
+    if period(hour) == "peak":
         return DISCHARGE if battery > 3 else HOLD
     return HOLD
 
 
 def rule_policy():
-    """Same shape as the DP policy: [battery, hour, grid]."""
-    policy = np.zeros((MAX_BATTERY + 1, 24, 2), dtype=int)
+    """Same shape as the DP policy: [battery, hour, off]."""
+    policy = np.zeros((MAX_BATTERY + 1, 24, MAX_OFF + 1), dtype=int)
     for battery in range(MAX_BATTERY + 1):
         for hour in range(24):
             policy[battery, hour, :] = rule_action(battery, hour)

@@ -4,7 +4,7 @@ from env import InverterEnv
 
 
 def evaluate(policy, pattern="normal", penalty=50, days=2000, seed=0):
-    """policy is an array indexed [battery, hour, grid].
+    """policy is an array indexed [battery, hour, off].
 
     Returns per-day averages: (score, bill, blackout_hours).
     The env draws one random number per step whatever the action,

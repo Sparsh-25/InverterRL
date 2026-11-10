@@ -8,16 +8,16 @@ import torch
 from torch import nn
 
 from agents.common import initial_q_value
-from env import MAX_BATTERY
+from env import MAX_BATTERY, MAX_OFF
 
 REWARD_SCALE = 100  # the network learns Q / 100, so values are about -6 instead of -600
 
 
 def encode(obs):
-    """[battery/10, sin(hour), cos(hour), grid]; sin/cos put hour 23 next to hour 0."""
-    battery, hour, grid = obs
+    """[battery/10, sin(hour), cos(hour), off/3]; sin/cos put hour 23 next to hour 0."""
+    battery, hour, off = obs
     angle = 2 * math.pi * hour / 24
-    return [battery / MAX_BATTERY, math.sin(angle), math.cos(angle), grid]
+    return [battery / MAX_BATTERY, math.sin(angle), math.cos(angle), off / MAX_OFF]
 
 
 class DQN:
@@ -82,8 +82,8 @@ class DQN:
             self.target_net.load_state_dict(self.net.state_dict())
 
     def policy_table(self):
-        """Greedy action for every state, shaped [battery, hour, grid] like the DP policy."""
-        obs = [(b, h, g) for b in range(MAX_BATTERY + 1) for h in range(24) for g in (0, 1)]
+        """Greedy action for every state, shaped [battery, hour, off] like the DP policy."""
+        obs = [(b, h, o) for b in range(MAX_BATTERY + 1) for h in range(24) for o in range(MAX_OFF + 1)]
         with torch.no_grad():
             actions = self.net(torch.tensor([encode(o) for o in obs])).argmax(dim=1)
-        return actions.numpy().reshape(MAX_BATTERY + 1, 24, 2)
+        return actions.numpy().reshape(MAX_BATTERY + 1, 24, MAX_OFF + 1)
