@@ -3,6 +3,7 @@ import pytest
 
 from agents import q_learning, sarsa
 from agents.common import linear_epsilon, new_q_table
+from agents.dqn import DQN, encode
 from env import CHARGE, InverterEnv
 
 
@@ -30,3 +31,20 @@ def test_one_step_td_update(agent):
     # All Q equal, so greedy picks Charge: reward -20 (2 units at ₹10)
     # target = -20 + 0.99 * -600 = -614, new Q = -600 + 0.1 * (-614 + 600)
     assert Q[5, 19, 1, CHARGE] == pytest.approx(-601.4)
+
+
+def test_dqn_encoding_puts_hour_23_next_to_hour_0():
+    battery, sin_0, cos_0, grid = encode((5, 0, 1))
+    _, sin_23, cos_23, _ = encode((5, 23, 1))
+    assert (battery, grid) == (0.5, 1)
+    assert abs(sin_0 - sin_23) < 0.3 and abs(cos_0 - cos_23) < 0.05
+
+
+def test_dqn_trains_and_gives_a_policy_table():
+    env = InverterEnv(episode_hours=100)  # more steps than one batch, so it learns
+    env.reset(seed=0)
+    agent = DQN(seed=0)
+    agent.train_episode(env, epsilon=1.0, rng=np.random.default_rng(0))
+    policy = agent.policy_table()
+    assert agent.steps == 100
+    assert policy.shape == (11, 24, 2) and set(policy.flat) <= {0, 1, 2}

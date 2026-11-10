@@ -5,15 +5,19 @@ import numpy as np
 from env import MAX_BATTERY, PRICE, period
 
 
-def new_q_table(gamma=0.99):
-    """Q[battery, hour, grid, action], all set to the value of always holding.
+def initial_q_value(gamma=0.99):
+    """Value of always holding: the average price (₹6) every hour, -600 at gamma 0.99.
 
-    Always holding costs the average price (₹6) every hour, worth 6 / (1 - gamma)
-    = 600 at gamma 0.99. Starting near the true scale makes learning much faster
-    than starting at 0 (see decisions.md).
+    Starting near the true scale makes learning much faster than starting at 0
+    (see decisions.md).
     """
     average_price = np.mean([PRICE[period(hour)] for hour in range(24)])
-    return np.full((MAX_BATTERY + 1, 24, 2, 3), -average_price / (1 - gamma))
+    return -average_price / (1 - gamma)
+
+
+def new_q_table(gamma=0.99):
+    """Q[battery, hour, grid, action], all set to initial_q_value."""
+    return np.full((MAX_BATTERY + 1, 24, 2, 3), initial_q_value(gamma))
 
 
 def epsilon_greedy(Q, obs, epsilon, rng):
