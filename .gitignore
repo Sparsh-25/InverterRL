@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+
+# macOS
+.DS_Store
+
+# ESMI raw data (over 500 MB, download link in README)
+data/
+
+# Notes and report drafts
+project.md
+decisions.md
+report/
+
+# Generated
+inverter-rl/results/analyze_log.txt
